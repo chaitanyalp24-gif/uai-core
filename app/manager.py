@@ -121,4 +121,3 @@ USER REQUEST: {user_prompt}
             return r.json()["choices"][0]["message"]["content"]
         except Exception as e:
             return f"[Groq Exception] {str(e)}"
-``
