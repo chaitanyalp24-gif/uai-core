@@ -1,22 +1,45 @@
 import os
 import httpx
+from app.memory import Memory
 
 
 class AIManager:
+    def __init__(self):
+        self.memory = Memory()
 
     def handle_prompt(self, user_prompt: str):
         intent = self.classify_intent(user_prompt)
         plan = self.create_plan(intent)
+
+        past_context = self.load_memory_context()
         results = []
 
         for step in plan:
-            results.append(self.process_step(step, intent, user_prompt))
+            result = self.process_step(step, intent, user_prompt, past_context)
+            results.append(result)
+
+        final_output = "\n".join(results)
+        self.memory.save(user_prompt, final_output)
 
         return {
             "intent": intent,
             "plan": plan,
+            "memory_used": past_context,
             "results": results
         }
+
+    # ------------------------
+    # Memory
+    # ------------------------
+    def load_memory_context(self):
+        memories = self.memory.recent(limit=3)
+        if not memories:
+            return ""
+
+        context = "PAST CONTEXT:\n"
+        for user_input, ai_output in memories:
+            context += f"- User: {user_input}\n- AI: {ai_output[:200]}\n\n"
+        return context
 
     # ------------------------
     # Intent classification
@@ -24,77 +47,63 @@ class AIManager:
     def classify_intent(self, text: str) -> str:
         t = text.lower()
 
-        if "code" in t or "python" in t or "program" in t:
+        if "code" in t or "python" in t:
             return "coding"
-        if "plan" in t or "strategy" in t or "business" in t:
+        if "plan" in t or "strategy":
             return "planning"
-        if "write" in t or "blog" in t or "article" in t:
+        if "write" in t:
             return "writing"
-        if "research" in t or "find" in t:
-            return "research"
+        if "remember" in t:
+            return "memory"
 
         return "general"
 
     # ------------------------
-    # Task planning
+    # Planning
     # ------------------------
     def create_plan(self, intent: str):
         return {
             "coding": [
                 "Understand the problem",
-                "Design the solution",
-                "Write the code",
-                "Explain the result"
+                "Write code",
+                "Explain result"
             ],
             "planning": [
-                "Define the goal",
                 "Analyze requirements",
-                "Design a strategy",
-                "Finalize the plan"
+                "Create plan",
+                "Refine output"
             ],
-            "writing": [
-                "Choose topic",
-                "Create outline",
-                "Write content",
-                "Edit and refine"
-            ],
-            "research": [
-                "Collect sources",
-                "Extract information",
-                "Summarize findings"
+            "memory": [
+                "Acknowledge information",
+                "Confirm memory saved"
             ]
-        }.get(intent, ["Respond clearly"])
+        }.get(intent, ["Respond naturally"])
 
     # ------------------------
-    # Route steps to Groq
+    # Task execution
     # ------------------------
-    def process_step(self, step: str, intent: str, user_prompt: str):
-        prompt = f"{step}. User request: {user_prompt}"
+    def process_step(self, step, intent, user_prompt, memory_context):
+        prompt = f"""
+{memory_context}
+
+TASK: {step}
+USER REQUEST: {user_prompt}
+"""
 
         return self.call_groq(prompt)
 
     # ------------------------
-    # ✅ Groq API Call (FIXED)
+    # Groq API
     # ------------------------
     def call_groq(self, user_prompt: str):
         api_key = os.getenv("GROQ_API_KEY")
-
-        if not api_key:
-            return "[ERROR] GROQ_API_KEY not loaded"
-
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         payload = {
             "model": "llama-3.1-8b-instant",
             "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a professional and helpful AI assistant."
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
+                {"role": "system", "content": "You are an intelligent AI assistant with memory."},
+                {"role": "user", "content": user_prompt}
             ]
         }
 
@@ -104,8 +113,7 @@ class AIManager:
         }
 
         response = httpx.post(url, headers=headers, json=payload, timeout=60)
-
-        if response.status_code != 200:
-            return f"[ERROR] Groq Error {response.status_code}: {response.text}"
+        response.raise_for_status()
 
         return response.json()["choices"][0]["message"]["content"]
+``
